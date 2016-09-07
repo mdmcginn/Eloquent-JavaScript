@@ -1,74 +1,103 @@
 :chap_num: 11
 :prev_link: 10_modules
 :next_link: 12_browser
-:load_files: ["js/11_language.js"]
+:load_files: ["code/chapter/11_language.js"]
+:zip: node/html
 
-= Practical: A Programming Language =
+= Project: A Programming Language =
 
+[chapterquote="true"]
 [quote, Hal Abelson and Gerald Sussman, Structure and Interpretation of Computer Programs]
 ____
 The evaluator, which determines the meaning of expressions in a
 programming language, is just another program.
 ____
 
+ifdef::interactive_target[]
+
+[chapterquote="true"]
 [quote, Master Yuan-Ma, The Book of Programming]
 ____
 When a student asked the master about the nature of the cycle of Data
-and Control, Yuan-Ma replied 'Think of a compiler, compiling itself.'
+and Control, Yuan-Ma replied ‘Think of a compiler, compiling itself.’
 ____
 
-Building your own programming language, though not necessary a very
-useful pursuit, is surprisingly easy (as long as you do not take it
-too seriously), and very enlightening.
+endif::interactive_target[]
 
-You see, there is no magic involved. I've often concluded that some
-human invention was so immensely clever and complicated that I'd never
-be able to understand it. But with a little reading and tinkering,
-such things, again and again, show themselves to be quite mundane.
+(((Abelson+++,+++ Hal)))(((Sussman+++,+++
+Gerald)))(((SICP)))(((project chapter)))Building your own
+((programming language)) is surprisingly easy (as long as you do not
+aim too high) and very enlightening.
 
+The main thing I want to show in this chapter is that there is no
+((magic)) involved in building your own language. I've often felt that
+some human inventions were so immensely clever and complicated that
+I'd never be able to understand them. But with a little reading and
+tinkering, such things often turn out to be quite mundane.
+
+(((Egg language)))We will build a programming language called Egg. It
+will be a tiny, simple language but one that is powerful enough to
+express any computation you can think of. It will also allow simple
+((abstraction)) based on ((function))s.
+
+[[parsing]]
 == Parsing ==
 
-The most immediately visible part of a programming language is its
-syntax—its notation. A parser is a program that reads a piece of text,
-and produces a data structure that more directly shows the structure
-of the program contained in the text. If the text does not form a
-valid program, the parser should complain about that.
+(((parsing)))(((validation)))The most immediately visible part of a
+programming language is its _((syntax))_, or notation. A _parser_ is a
+program that reads a piece of text and produces a data structure that
+reflects the structure of the program contained in that text. If the
+text does not form a valid program, the parser should complain and
+point out the error.
 
-Our language will have a very simple and uniform syntax. In it,
-everything is an expression. An expression can be a variable, a
-number, a string, or an application. Applications are used both to
-call functions, and for constructs like `if` or `while`.
+(((special form)))Our language will have a simple and uniform
+syntax. Everything in Egg is an ((expression)). An expression can be a
+variable, a number, a string, or an _application_. Applications are
+used for function calls but also for constructs such as `if` or `while`.
 
-To keep the parser short, strings in this language do not support
-anything like backslash escapes, they are simply a sequence of
-characters that are not double quotes, wrapped in double quotes.
-Numbers are a sequence of digits. And variable names can consist of
-any character that is not whitespace and does not have a special
-meaning in the language.
+(((double-quote character)))(((parsing)))(((escaping,in strings)))To
+keep the parser simple, strings in Egg do not support anything like
+backslash escapes. A string is simply a sequence of characters that
+are not double quotes, wrapped in double quotes. A number is a
+sequence of digits. Variable names can consist of any character that
+is not ((whitespace)) and does not have a special meaning in the
+syntax.
 
-Applications are written the way they are in JavaScript, by putting
-parentheses after an expression, and having any number of arguments,
-separated by commas, between those parentheses.
+(((comma character)))Applications are written the way they are in
+JavaScript, by putting ((parentheses)) after an expression and having
+any number of ((argument))s between those parentheses, separated by
+commas.
 
 ----
 do(define(x, 10),
-   if(>(x, 5)),
+   if(>(x, 5),
       print("large"),
-      print("small"))
+      print("small")))
 ----
 
-The uniformity of the language means that what would be an operator in
-JavaScript (such as ‘>’) is a normal variable, applied just like other
-functions, in this language. Since there is also no concept of a
-“block”, doing first one thing and the another is also written as an
-application, of the `do` construct.
+(((block)))The ((uniformity)) of the ((Egg language)) means that
+things that are ((operator))s in JavaScript (such as `>`) are normal
+variables in this language, applied just like other ((function))s. And
+since the ((syntax)) has no concept of a block, we need a `do`
+construct to represent doing multiple things in sequence.
 
-The data structure the parser will use to describe such a program
-consists of objects, each of which has a `type` property indicating
-the kind of expression it is (`"word"`, `"value"`, or `"apply"`), and
-other properties to describe its content. The `>(x, 5)` part of the
-program above would be represented like this:
+(((type property)))(((parsing)))The ((data structure)) that the parser will
+use to describe a program will consist of ((expression)) objects, each
+of which has a `type` property indicating the kind of expression it is
+and other properties to describe its content.
 
+(((identifier)))Expressions of type `"value"` represent literal strings
+or numbers. Their `value` property contains the string or number value
+that they represent. Expressions of type `"word"` are used for
+identifiers (names). Such objects have a `name` property that holds
+the identifier's name as a string. Finally, `"apply"` expressions
+represent applications. They have an `operator` property that refers
+to the expression that is being applied, and they have an `args` property that
+refers to an array of argument expressions.
+
+The `>(x, 5)` part of the previous program would be represented like this:
+
+[source,application/json]
 ----
 {
   type: "apply",
@@ -80,32 +109,39 @@ program above would be represented like this:
 }
 ----
 
-Such a data structure is called a _syntax tree_, because it has a
-tree-like shape—the fact that expressions contain other expressions,
-which in turn might contain more expression, is similar to the way
-branches split and split again.
+indexsee:[abstract syntax tree,syntax tree]
+Such a ((data structure)) is called a _((syntax tree))_. If you
+imagine the objects as dots and the links between them as lines
+between those dots, it has a ((tree))like shape. The fact that
+expressions contain other expressions, which in turn might contain
+more expressions, is similar to the way branches split and split again.
 
-The parser we wrote for the configuration file format in Chapter 9 had
-a very simple structure—it could split the input into lines, and then
-handle one line at a time, where each line had one of a few simple
-forms.
+image::img/syntax_tree.svg[alt="The structure of a syntax tree",width="5cm"]
 
-This time, we must find a different approach. Expressions are not
-separated by lines, and they have a recursive structure—and expression
-may contain other expressions.
+(((parsing)))Contrast this to the parser we wrote for the
+configuration file format in link:09_regexp.html#ini[Chapter 9], which
+had a simple structure: it split the input into lines and
+handled those lines one at a time. There were only a few simple forms
+that a line was allowed to have.
 
-Fortunately, this problem can be solved pleasantly by using a parsing
-function that is recursive in a way that reflects the recursive nature
-of the language.
+(((recursion)))(((nesting,of expressions)))Here we must find a
+different approach. Expressions are not separated into lines, and they
+have a recursive structure. Application expressions _contain_ other
+expressions.
 
-If we have a function `parseExpression`, which takes a string
-containing a program as input, and returns an object that contains the
-data structure for the expression, along with the part of the input
-string that is still left after parsing this expression. When parsing
-sub-expressions (the argument to an application, for example), this
-function can be called again, yielding the argument expression as well
-as the text that remains (which may contain more arguments, or the
-closing parentheses that ends the list of arguments).
+(((elegance)))Fortunately, this problem can be solved elegantly by
+writing a parser function that is recursive in a way that reflects the
+recursive nature of the language.
+
+(((parseExpression function)))(((syntax tree)))We define a function
+`parseExpression`, which takes a string as input and returns an
+object containing the data structure for the expression at the start
+of the string, along with the part of the string left after parsing
+this expression. When parsing subexpressions (the argument to an
+application, for example), this function can be called again, yielding
+the argument expression as well as the text that remains. This text
+may in turn contain more arguments or may be the closing parenthesis
+that ends the list of arguments.
 
 This is the first part of the parser:
 
@@ -135,68 +171,70 @@ function skipSpace(string) {
 }
 ----
 
-Because the language allows any amount of whitespace between its
-elements, we have to repeatedly cut the whitespace off the start of
-the program string. This is what the `skipSpace` function helps with.
+(((skipSpace function)))Because Egg allows any amount of
+((whitespace)) between its elements, we have to repeatedly cut the
+whitespace off the start of the program string. This is what the
+`skipSpace` function helps with.
 
-After skipping any leading space, `parseExpression` uses three regular
-expressions to spot the three simple (atomic) elements that the
-language supports—strings, numbers, and words. Depending on which one
-matches, it constructs a different kind of data structure. If none
-matches, the input is not a valid expression, and it throws an error.
-`SyntaxError` is a standard error object type, which is also used when
-an attempt is made to run an invalid JavaScript program.
+(((literal expression)))(((SyntaxError type)))After skipping any
+leading space, `parseExpression` uses three ((regular expression))s to
+spot the three simple (atomic) elements that Egg supports: strings,
+numbers, and words. The parser constructs a different kind of data
+structure depending on which one matches. If the input does not match
+one of these three forms, it is
+not a valid expression, and the parser throws an error. `SyntaxError` is a
+standard error object type, which is raised when an attempt is made to
+run an invalid JavaScript program.
 
-We can then cut off the part that we matched from the program string
-(skipping whitespace again), and pass that, along with the object for
-the expression, to `parseApply`, which checks whether this is an
-application, and if so, handles the parsing of a parenthesized list of
-arguments.
+(((parseApply function)))We can then cut off the part that we matched
+from the program string and pass that, along with the object for the
+expression, to `parseApply`, which checks whether the expression is an
+application. If so, it parses a parenthesized list of arguments.
 
 // include_code
 
 [source,javascript]
 ----
-function parseApply(left, program) {
+function parseApply(expr, program) {
   program = skipSpace(program);
   if (program[0] != "(")
-    return {expr: left, rest: program};
+    return {expr: expr, rest: program};
 
   program = skipSpace(program.slice(1));
-  var expr = {type: "apply", operator: left, args: []};
-  if (program[0] != ")") {
-    for (;;) {
-      var arg = parseExpression(program);
-      expr.args.push(arg.expr);
-      program = skipSpace(arg.rest);
-      if (program[0] == ",")
-        program = skipSpace(program.slice(1));
-      else if (program[0] == ")")
-        break;
-    }
+  expr = {type: "apply", operator: expr, args: []};
+  while (program[0] != ")") {
+    var arg = parseExpression(program);
+    expr.args.push(arg.expr);
+    program = skipSpace(arg.rest);
+    if (program[0] == ",")
+      program = skipSpace(program.slice(1));
+    else if (program[0] != ")")
+      throw new SyntaxError("Expected ',' or ')'");
   }
   return parseApply(expr, program.slice(1));
 }
 ----
 
-If the next character in the program is not an opening parenthesis,
-`parseApply` returns the expression to the left, along with the rest
-of the program.
+(((parsing)))If the next character in the program is not an opening
+parenthesis, this is not an application, and `parseApply` simply
+returns the expression it was given.
 
-Otherwise, it skips the opening parenthesis, it creates a syntax tree
-for this application expression. If the next character is not a
-closing parentheses, we try to read an argument expression by calling
-`parseExpression` (the recursion is indirect, through `parseApply` and
-`parseExpression` calling each other). After the argument, it expects
-either a comma, in which case we skip it, or a closing parentheses, in
-which case we stop looking for more argument expressions.
+(((recursion)))Otherwise, it skips the opening parenthesis and
+creates the ((syntax tree)) object for this application expression. It
+then recursively calls `parseExpression` to parse each argument until a
+closing parenthesis is found. The recursion is indirect, through
+`parseApply` and `parseExpression` calling each other.
 
-Finally, `parseApply` is called again, to see if this application is
-followed by another set of parentheses (such as `multiplier(2)(1)`).
+Because an application expression can itself be applied (such as in
+`multiplier(2)(1)`), `parseApply` must, after it has parsed an
+application, call itself again to check whether another pair of
+parentheses follows.
 
-This is almost all we need to parse our language. We wrap it in a
-convenient `parse` function that verifies that no text remains after
-the program, and gives us the program's data structure.
+(((syntax tree)))(((Egg language)))(((parse function)))This is all we
+need to parse Egg. We wrap it in a convenient `parse` function that
+verifies that it has reached the end of the input string after parsing
+the expression (an Egg program is a single expression), and that
+gives us the program's data structure.
 
 // include_code strip_log
 // test: join
@@ -206,7 +244,7 @@ the program, and gives us the program's data structure.
 function parse(program) {
   var result = parseExpression(program);
   if (skipSpace(result.rest).length > 0)
-    throw new SyntaxError("Unexpected text after program.");
+    throw new SyntaxError("Unexpected text after program");
   return result.expr;
 }
 
@@ -217,18 +255,19 @@ console.log(parse("+(a, 10)"));
 //           {type: "value", value: 10}]}
 ----
 
-It works! It doesn't give us very helpful information when it fails,
-and doesn't store the line and column on which the expressions
-started, which might be helpful when reporting errors later on, but it
-is good enough for our purpose.
+(((error message)))It works! It doesn't give us very helpful
+information when it fails and doesn't store the line and column on
+which each expression starts, which might be helpful when reporting
+errors later, but it's good enough for our purposes.
 
 == The evaluator ==
 
-What can we do with a syntax tree for a program? Run it, of course!
-And that is what the evaluator does. You give it a syntax tree and an
-environment—an object containing variable bindings—and it will
-evaluate the expression that the tree represents and return the value
-that this produces.
+(((evaluate function)))(((evaluation)))(((interpretation)))(((syntax
+tree)))(((Egg language)))What can we do with the syntax tree for a
+program? Run it, of course! And that is what the evaluator does. You
+give it a syntax tree and an environment object that associates names
+with values, and it will evaluate the expression that the tree
+represents and return the value that this produces.
 
 // include_code
 
@@ -262,34 +301,43 @@ function evaluate(expr, env) {
 var specialForms = Object.create(null);
 ----
 
-The evaluator has code for each of the expression types. A literal
-value expression simply produces its value. When running into a
-variable, we must check that it is actually defined in the
-environment, and read it out if it is.
+(((literal expression)))(((environment)))The evaluator has code for
+each of the ((expression)) types. A literal value expression simply
+produces its value. (For example, the expression `100` just evaluates
+to the number 100.) For a variable, we must check whether it is
+actually defined in the environment and, if it is, fetch the
+variable's value.
 
-Applications are more involved. If they are a special form, like `if`,
-we do not evaluate anything, and simply pass the argument expressions,
-along with the environment, to the function that handles this form.
-Next, we evaluate the operator, and verify that it is a function—we
-will use plain JavaScript functions to represent functions in this
-language.
+(((function,application)))Applications are more involved. If they are
+a ((special form)), like `if`, we do not evaluate anything and simply
+pass the argument expressions, along with the environment, to the
+function that handles this form. If it is a normal call, we evaluate
+the operator, verify that it is a function, and call it with the
+result of evaluating the arguments.
 
-The the recursive structure of `evaluate` resembles the similar
-structure of the parser. Both of them mirror the structure of the
-language itself. It would also be possible to not separate the parser
-from the evaluator, and evaluate during parsing, but splitting them up
-makes the program easier to think about.
+We will use plain JavaScript function values to represent Egg's
+function values. We will come back to this
+link:11_language.html#egg_fun[later], when the special form called
+`fun` is defined.
 
-This is really all that is needed to interpret a language. It is that
-simple. Of course, without defining a few special forms, and adding
-some useful values to the environment, you can't do anything with the
-language yet.
+(((readability)))(((evaluate
+function)))(((recursion)))(((parsing)))The recursive structure of
+`evaluate` resembles the similar structure of the parser. Both mirror
+the structure of the language itself. It would also be possible to
+integrate the parser with the evaluator and evaluate during parsing,
+but splitting them up this way makes the program more readable.
+
+(((Egg language)))(((interpretation)))This is really all that is
+needed to interpret Egg. It is that simple. But without defining a few
+special forms and adding some useful values to the ((environment)),
+you can't do anything with this language yet.
 
 == Special forms ==
 
-The `specialForms` object lets us look up the syntactic constructs in
-our language by name. It holds functions that interpret the construct.
-It is currently empty. Let us add a few forms.
+(((special form)))(((specialForms object)))The `specialForms` object
+is used to define special syntax in Egg. It associates words with
+functions that evaluate such special forms. It is currently empty.
+Let's add some forms.
 
 // include_code
 
@@ -297,7 +345,7 @@ It is currently empty. Let us add a few forms.
 ----
 specialForms["if"] = function(args, env) {
   if (args.length != 3)
-    throw new SyntaxError("Bad number of args to if.");
+    throw new SyntaxError("Bad number of args to if");
 
   if (evaluate(args[0], env) !== false)
     return evaluate(args[1], env);
@@ -306,16 +354,25 @@ specialForms["if"] = function(args, env) {
 };
 ----
 
-The `if` in this language expects exactly three arguments. It will
-evaluate the first, and when the result isn't the value `false`, it
-will evaluate the second. Otherwise, the third gets evaluated. Because
-`if` is an expression, not a statement, it has a value—namely the
-result of the second or third argument.
+(((conditional execution)))Egg's `if` construct expects exactly three
+arguments. It will evaluate the first, and if the result isn't the
+value `false`, it will evaluate the second. Otherwise, the third gets
+evaluated. This `if` form is more similar to JavaScript's ternary `?:`
+operator than to JavaScript's `if`. It is an expression, not a statement,
+and it produces a value, namely, the result of the second or third
+argument.
 
-Our language differs from JavaScript in its handling of the condition
-value to `if`—it will not treat 0 or the empty string as false.
+(((Boolean)))Egg differs from JavaScript in how it handles the
+condition value to `if`. It will not treat things like zero or the
+empty string as false, but only the precise value `false`.
 
-The `while` form is similar;
+(((short-circuit evaluation)))The reason we need to represent `if` as
+a special form, rather than a regular function, is that all arguments
+to functions are evaluated before the function is called, whereas
+`if` should evaluate only _either_ its second or its third argument,
+depending on the value of the first.
+
+The `while` form is similar.
 
 // include_code
 
@@ -323,21 +380,20 @@ The `while` form is similar;
 ----
 specialForms["while"] = function(args, env) {
   if (args.length != 2)
-    throw new SyntaxError("Bad number of args to while.");
+    throw new SyntaxError("Bad number of args to while");
 
   while (evaluate(args[0], env) !== false)
     evaluate(args[1], env);
 
-  // Since undefined does not exist in our language, and
-  // this form does not return a meaningful value, we
-  // return false.
+  // Since undefined does not exist in Egg, we return false,
+  // for lack of a meaningful result.
   return false;
 };
 ----
 
 Another basic building block is `do`, which executes all its arguments
-from top to bottom, and whose value is the value produced by the last
-expression.
+from top to bottom. Its value is the value produced by the last
+argument.
 
 // include_code
 
@@ -352,12 +408,12 @@ specialForms["do"] = function(args, env) {
 };
 ----
 
-To be able to create variables (and give them new values), we also
-create a form called `define`, which expects a word as first argument,
-and an expression producing the value to assign to that word as second
-argument. Since it, like everything, is an expression, we make it
-return the value that was assigned (just like JavaScripts ‘=’
-operator).
+(((= operator)))To be able to create ((variable))s and give them new
+values, we also create a form called `define`. It expects a word as
+its first argument and an expression producing the value to assign to
+that word as its second argument. Since `define`, like everything, is
+an expression, it must return a value. We'll make it return the value
+that was assigned (just like JavaScript's `=` operator).
 
 // include_code
 
@@ -365,7 +421,7 @@ operator).
 ----
 specialForms["define"] = function(args, env) {
   if (args.length != 2 || args[0].type != "word")
-    throw new SyntaxError("Bad use of define.");
+    throw new SyntaxError("Bad use of define");
   var value = evaluate(args[1], env);
   env[args[0].name] = value;
   return value;
@@ -374,19 +430,16 @@ specialForms["define"] = function(args, env) {
 
 == The environment ==
 
-We have syntax for numbers and strings, but not for boolean values,
-which we also want to support, if only to be able to use the `if`
-construct we just defined.
+(((Egg language)))(((evaluate function)))The ((environment)) accepted
+by `evaluate` is an object with properties whose names correspond to
+variable names and whose values correspond to the values those
+((variable))s are bound to. Let's define an environment object to
+represent the ((global scope)).
 
-Since there are only two boolean values, we do not need syntax for
-them, we can simply bind variables to them and use those to get at
-them.
-
-The environment accepted by `evaluate` is simply an object with
-properties whose names correspond to variable names, and whose values
-correspond to the values those variables are bound to. Let us define
-an object to represent the global scope, and add bindings for the
-boolean values.
+To be able to use the `if` construct we just defined, we must
+have access to ((Boolean)) values. Since there are only two
+Boolean values, we do not need special syntax for them. We simply bind
+two variables to the values `true` and `false` and use those.
 
 // include_code
 
@@ -398,7 +451,7 @@ topEnv["true"] = true;
 topEnv["false"] = false;
 ----
 
-We can now evaluate a simple expression that inverts a boolean value.
+We can now evaluate a simple expression that negates a Boolean value.
 
 [source,javascript]
 ----
@@ -407,24 +460,23 @@ console.log(evaluate(prog, topEnv));
 // → false
 ----
 
-To implement “primitive” functionality, such as arithmetic and
-comparison operators, we will also add some functions to the
-environment. To keep things short, we'll use `new Function` to
-synthesize a bunch of operator functions in a loop, rather than
-defining them all individually.
+(((arithmetic)))(((Function constructor)))To supply basic
+((arithmetic)) and ((comparison)) ((operator))s, we will also add some
+function values to the ((environment)). In the interest of keeping the
+code short, we'll use `new Function` to synthesize a bunch of operator
+functions in a loop, rather than defining them all individually.
 
 // include_code
 
 [source,javascript]
 ----
 ["+", "-", "*", "/", "==", "<", ">"].forEach(function(op) {
-  topEnv[op] =
-    new Function("a, b", "return a " + op + " b;");
+  topEnv[op] = new Function("a, b", "return a " + op + " b;");
 });
 ----
 
-A way to output values is also very useful, so we wrap `console.log`
-and call it `print`.
+A way to ((output)) values is also very useful, so we'll wrap
+`console.log` in a function and call it `print`.
 
 // include_code
 
@@ -432,14 +484,14 @@ and call it `print`.
 ----
 topEnv["print"] = function(value) {
   console.log(value);
-  return false;
+  return value;
 };
 ----
 
-That gives us the enough crude tools to write some simple programs.
-The `run` function provides a convenient way to write them, taking
-care of parsing, creating a fresh environment, and evaluating the
-strings we pass it as a single program.
+(((parsing)))(((run function)))That gives us enough elementary tools
+to write simple programs. The following `run` function provides a
+convenient way to write and run them. It creates a fresh environment
+and parses and evaluates the strings we give it as a single program.
 
 // include_code
 
@@ -453,10 +505,11 @@ function run() {
 }
 ----
 
-`Array.prototype.slice.call` is a trick to turn an array-like object,
-such as `arguments` into a real array, so that we can call `join` on
-it. It takes all the arguments given to `run`, and treats them as the
-lines of a program.
+(((join method)))(((call method)))The use of
+`Array.prototype.slice.call` is a trick to turn an ((array-like
+object)), such as `arguments`, into a real array so that we can call
+`join` on it. It takes all the arguments given to `run` and treats
+them as the lines of a program.
 
 [source,javascript]
 ----
@@ -469,18 +522,20 @@ run("do(define(total, 0),",
 // → 55
 ----
 
-This is the program that computes the total of the numbers 1 to 10,
-expressed in our own language. It is clearly uglier than JavaScript,
-but still not bad for a language implemented in less than 150 lines of
-code.
+(((summing example)))(((Egg language)))This is the program we've seen
+several times before, which computes the sum of the numbers 1 to 10,
+expressed in Egg. It is clearly uglier than the equivalent JavaScript
+program but not bad for a language implemented in less than 150
+((lines of code)).
 
+[[egg_fun]]
 == Functions ==
 
-A programming language without functions is a poor programming
-language indeed.
+(((function)))(((Egg language)))A programming language without
+functions is a poor programming language indeed.
 
-Fortunately, we can easily add a `fun` construct, which treats its
-last argument as the function's body, and all arguments before that as
+Fortunately, it is not hard to add a `fun` construct, which treats its
+last argument as the function's body and treats all the arguments before that as
 the names of the function's arguments.
 
 // include_code
@@ -489,10 +544,10 @@ the names of the function's arguments.
 ----
 specialForms["fun"] = function(args, env) {
   if (!args.length)
-    throw new SyntaxError("Functions need a body.");
+    throw new SyntaxError("Functions need a body");
   function name(expr) {
     if (expr.type != "word")
-      throw new SyntaxError("Argnames must be words.");
+      throw new SyntaxError("Arg names must be words");
     return expr.name;
   }
   var argNames = args.slice(0, args.length - 1).map(name);
@@ -500,7 +555,7 @@ specialForms["fun"] = function(args, env) {
 
   return function() {
     if (arguments.length != argNames.length)
-      throw new TypeError("Wrong number of arguments.");
+      throw new TypeError("Wrong number of arguments");
     var localEnv = Object.create(env);
     for (var i = 0; i < arguments.length; i++)
       localEnv[argNames[i]] = arguments[i];
@@ -509,21 +564,24 @@ specialForms["fun"] = function(args, env) {
 };
 ----
 
-Functions, in our language, have their own local environment, just
-like in JavaScript. We simply use `Object.create` to make a new object
-that has access to the variables in the outer environment (its
-prototype), but can also contain new variables without changing that
-outer scope.
+(((local scope)))(((Object.create function)))(((prototype)))Functions
+in Egg have their own local environment, just like in JavaScript. We
+use `Object.create` to make a new object that has access to the
+variables in the outer environment (its prototype) but that can also
+contain new variables without modifying that outer scope.
 
-The function created by the `fun` form creates this local environment,
-and adds the argument variables to it. It then evaluates the function
-body in this environment, and returns the result.
+(((power example)))(((evaluation)))(((interpretation)))The function
+created by the `fun` form creates this local environment and adds the
+argument variables to it. It then evaluates the function body in this
+environment and returns the result.
+
+// start_code
 
 [source,javascript]
 ----
 run("do(define(plusOne, fun(a, +(a, 1))),",
-    "   print(+(plusOne(1), 2)))");
-// → 4
+    "   print(plusOne(10)))");
+// → 11
 
 run("do(define(pow, fun(base, exp,",
     "     if(==(exp, 0),",
@@ -535,115 +593,109 @@ run("do(define(pow, fun(base, exp,",
 
 == Compilation ==
 
-What we have built is an interpreter. During evaluating, it acts
-directly on the simple representation of the program that the parser
-produced.
+(((interpretation)))(((compilation)))What we have built is an
+interpreter. During evaluation, it acts directly on the representation
+of the program produced by the parser.
 
-Compilation is the process of adding another step in between, which
-transforms the program into something that can be evaluated more
-efficiently by doing as much of the work as possible in advance. For
-example, in well designed languages it can be seen which definition
-each use of a variable corresponds to without actually running the
-program, which can be used to avoid looking up the variable by name
-every time it is accessed, and directly fetch it from its
-predetermined memory location instead.
+(((efficiency)))(((performance)))_Compilation_ is the process of
+adding another step between the parsing and the running of a program,
+which transforms the program into something that can be evaluated more
+efficiently by doing as much work as possible in advance. For example,
+in well-designed languages it is obvious, for each use of a
+((variable)), which variable is being referred to, without actually
+running the program. This can be used to avoid looking up the variable
+by name every time it is accessed and to directly fetch it from some
+predetermined ((memory)) location.
 
-Traditionally, compilation involves converting the program to machine
-code, the raw format that a computer's processor can execute. But any
-process that converts a program to a different representation can be
-thought of as compilation.
+Traditionally, ((compilation)) involves converting the program to
+((machine code)), the raw format that a computer's processor can
+execute. But any process that converts a program to a different
+representation can be thought of as compilation.
 
-It would be possible to write an alternative evaluation strategy for
-our language, one that first converts the program to a JavaScript
-program, uses `new Function` to invoke the JavaScript compiler on it,
-and then runs that. When done right, this would actually make our
-language very fast, while still being quite simple to implement.
+(((simplicity)))(((Function constructor)))(((transpilation)))It would
+be possible to write an alternative ((evaluation)) strategy for Egg,
+one that first converts the program to a JavaScript program, uses `new
+Function` to invoke the JavaScript compiler on it, and then runs the
+result. When done right, this would make Egg run very fast while
+still being quite simple to implement.
+
+If you are interested in this topic and willing to spend some time on
+it, I encourage you to try to implement such a compiler as an
+exercise.
 
 == Cheating ==
 
-When we defined `if` and `while`, you probably noticed that they were
-more or less trivial wrappers around JavaScript's own `if`, and
-`while`. The values in our language are not wrapped at all, they are
-regular old JavaScript values.
+(((Egg language)))When we defined `if` and `while`, you probably
+noticed that they were more or less trivial wrappers around
+JavaScript's own `if` and `while`. Similarly, the values in Egg are
+just regular old JavaScript values.
 
-So sure, if you compare the language created in this chapter, built on
-top of JavaScript, with the amount of work and complexity required to
-build a programming language directly on the raw functionality
-provided by a machine, the difference is huge. If the goal is
-programmer street cred, this project is not very impressive.
-
-Regardless, I hope it illustrated the concepts involved. Many other
-interesting concepts would of course come up when taking this project
-further, but this is not a compiler writer's book (do pick one up
-sometime, they are fascinating).
+If you compare the implementation of Egg, built on top of JavaScript,
+with the amount of work and complexity required to build a programming
+language directly on the raw functionality provided by a machine, the
+difference is huge. Regardless, this example hopefully gave you an
+impression of the way ((programming language))s work.
 
 And when it comes to getting something done, cheating is more
-effective than doing everything yourself. While the toy language in
+effective than doing everything yourself. Though the toy language in
 this chapter doesn't do anything that couldn't be done better in
 JavaScript, there _are_ situations where writing small languages helps
 get real work done.
 
 Such a language does not have to resemble a typical programming
-language. For example, if JavaScript would not come equipped with regular
-expressions, you would write your own parser and evaluator for such a
-sub-language, and have a powerful language for describing patterns in
-strings.
+language. If JavaScript didn't come equipped with regular expressions,
+you could write your own parser and evaluator for such a sublanguage.
 
-Or, imagine you are building a giant robotic dinosaur, and want to
-program it. JavaScript might not be the most effective way to do this,
-and you might instead opt for a language that looks like this:
+(((artificial intelligence)))Or imagine you are building a giant
+robotic ((dinosaur)) and need to program its ((behavior)). JavaScript
+might not be the most effective way to do this. You might instead opt
+for a language that looks like this:
 
 ----
-behavior travel
+behavior walk
   perform when
-    not at goal
+    destination ahead
   actions
     move left-foot
     move right-foot
 
 behavior attack
   perform when
-    detected Godzilla
+    Godzilla in-view
   actions
-    fire eye-laser
+    fire laser-eyes
     launch arm-rockets
 ----
 
-This is what is usually called a _domain-specific language_, a
-language tailored to express a narrow domain of knowledge, which can
-be more expressive than a general-purpose programming language because
-it is designed to express exactly the things that need expressing in
-its domain, and nothing else.
+(((expressivity)))This is what is usually called a _((domain-specific
+language))_, a language tailored to express a narrow domain of
+knowledge. Such a language can be more expressive than a
+general-purpose language because it is designed to express exactly the
+things that need expressing in its domain and nothing else.
 
 == Exercises ==
 
 === Arrays ===
 
-Add support for arrays to our language, by adding the functions
-`length(array)` (to get an array's length) and `element(array, n)` (to
-fetch the `n`^th^ element) to the top scope.
+(((Egg language)))Add support for ((array))s to Egg by adding the
+following three functions to the top scope: `array(...)` to
+construct an array containing the argument values, `length(array)` to
+get an array's length, and `element(array, n)` to fetch the n^th^
+element from an array.
 
-To create an array, we add the special form `array`, which accepts any
-number of arguments, and returns an array containing their values. The
-only reason this operator has to be a special form is our language
-does not allow us to define functions that take any number of
-arguments.
-
-ifdef::html_target[]
+ifdef::interactive_target[]
 
 // test: no
 
 [source,javascript]
 ----
-// Your code here.
+// Modify these definitions...
+
+topEnv["array"] = "...";
 
 topEnv["length"] = "...";
 
 topEnv["element"] = "...";
-
-specialForms["array"] = function(args, env) {
-
-};
 
 run("do(define(sum, fun(array,",
     "     do(define(i, 0),",
@@ -655,32 +707,29 @@ run("do(define(sum, fun(array,",
     "   print(sum(array(1, 2, 3))))");
 // → 6
 ----
-endif::html_target[]
+endif::interactive_target[]
 
-!!solution!!
+!!hint!!
 
-The easiest way to do this is to represent the arrays in the language
+The easiest way to do this is to represent Egg arrays
 with JavaScript arrays.
 
-The values added to the top environment must be functions. They take
-the arguments that they are specified to take, and return values that
-can be straightforwardly derived from their arguments.
+(((slice method)))The values added to the top environment must be
+functions. `Array.prototype.slice` can be used to convert an
+`arguments` array-like object into a regular array.
 
-The special `array` form should simply evaluate each of its arguments
-in the environment it is given, and return an array containing the
-results. This is very easily done with the `map` method.
-
-!!solution!!
+!!hint!!
 
 === Closure ===
 
-The way we have defined `fun` causes functions in our language to
-“close over” the surrounding environment, just like JavaScript
-functions.
+(((closure)))(((function,scope)))The way we have defined `fun` allows
+functions in Egg to “close over” the surrounding environment, allowing
+the function's body to use local values that were visible at the time
+the function was defined, just like JavaScript functions do.
 
-The program below illustrates this—function `f` returns a function
+The following program illustrates this: function `f` returns a function
 that adds its argument to `f`'s argument, meaning that it needs access
-to the local scope inside `f` to be able to use variable `a`.
+to the local ((scope)) inside `f` to be able to use variable `a`.
 
 [source,javascript]
 ----
@@ -692,41 +741,44 @@ run("do(define(f, fun(a, fun(b, +(a, b)))),",
 Go back to the definition of the `fun` form and explain which
 mechanism causes this to work.
 
-!!solution!!
+!!hint!!
 
-Again, we are riding along on a JavaScript mechanism to get the
-equivalent feature in our own language. Special forms are passed the
-local environment when they are evaluated, so that they can evaluate
-their sub-forms in that environment. The function returned by `fun`
-closes over the `env` argument given to its enclosing function, and
-uses that to create the function's local environment when it is called.
+(((closure)))Again, we are riding along on a JavaScript mechanism to
+get the equivalent feature in Egg. Special forms are passed the local
+environment in which they are evaluated so that they can evaluate
+their subforms in that environment. The function returned by `fun`
+closes over the `env` argument given to its enclosing function and
+uses that to create the function's local ((environment)) when it is
+called.
 
-This means that the prototype of the local environment will be the
-environment in which the function was created, which makes it possible
-to access variables in that environment from the function. This is all
-there is to implementing closure (though to compile it in a way that
-is actually efficient, you'd need to do some more work).
+(((compilation)))This means that the ((prototype)) of the local
+environment will be the environment in which the function was created,
+which makes it possible to access variables in that environment from
+the function. This is all there is to implementing closure (though to
+compile it in a way that is actually efficient, you'd need to do some
+more work).
 
-!!solution!!
+!!hint!!
 
 === Comments ===
 
-It would be nice if we could write comments in our language. For
-example, whenever a hash sign is found, we could treat the rest of the
-line as a comment (similar to ‘`//`’ in JavaScript), ignoring it.
+(((hash character)))(((Egg language)))It would be nice if we could
+write ((comment))s in Egg. For example, whenever we find a hash sign
+(`#`), we could treat the rest of the line as a comment and ignore it,
+similar to `//` in JavaScript.
 
-We do not have to make any big changes to the parser to support this.
-We can simply change `skipSpace` to skip comments as if they are
-whitespace, so that all the points where `skipSpace` is called will
-now also skip (ignore) comments.
+(((skipSpace function)))We do not have to make any big changes to the
+parser to support this. We can simply change `skipSpace` to skip
+comments like they are ((whitespace)) so that all the points where
+`skipSpace` is called will now also skip comments. Make this change.
 
-ifdef::html_target[]
+ifdef::interactive_target[]
 
 // test: no
 
 [source,javascript]
 ----
-// This is the old skipSpace. You can change it.
+// This is the old skipSpace. Modify it...
 function skipSpace(string) {
   var first = string.search(/\S/);
   if (first == -1) return "";
@@ -738,49 +790,61 @@ console.log(parse("# hello\nx"));
 
 console.log(parse("a # one\n   # two\n()"));
 // → {type: "apply",
-//    operator: {type: "word", name: "x"},
+//    operator: {type: "word", name: "a"},
 //    args: []}
 ----
-endif::html_target[]
+endif::interactive_target[]
 
-!!solution!!
+!!hint!!
 
-Make sure your solution handles multiple comments in a row, with
-potentially whitespace between or after them.
+(((comment)))Make sure your solution handles multiple comments in a
+row, with potentially ((whitespace)) between or after them.
 
-A regular expression is probably the easiest way to solve this. Match
-against something that matches “whitespace or a comment, zero or more
-times” using the `exec` or `match` method, and then look at the length
-of the first element in the returned array to find out how many
-characters to slice off.
+A ((regular expression)) is probably the easiest way to solve this.
+Write something that matches “whitespace or a comment, zero or more
+times”. Use the `exec` or `match` method and look at the length of
+the first element in the returned array (the whole match) to find out
+how many characters to slice off.
 
-!!solution!!
+!!hint!!
 
 === Fixing scope ===
 
-Currently, the only way to assign a value to a variable is `define`.
-This acts both as a way to define new variables and to give existing
-ones a new meaning.
+(((variable,definition)))(((assignment)))Currently, the only way to
+assign a ((variable)) a value is `define`. This construct acts as
+a way both to define new variables and to give existing ones a new value.
 
-This ambiguity causes a problem. When you try to give a non-local
-variable a new value, you will end up defining a local one with the
-same name instead. Some languages do work like this, but I've always
-found it silly.
+(((local variable)))This ((ambiguity)) causes a problem. When you try
+to give a nonlocal variable a new value, you will end up defining a
+local one with the same name instead. (Some languages work like this
+by design, but I've always found it a silly way to handle ((scope)).)
 
-Add a special form `set`, similar to `define`, which gives a variable
-a new value, updating the variable in an outer scope if it doesn't
-already exist in the inner scope. If the variable is not defined at
-all, throw a `ReferenceError`.
+(((ReferenceError type)))Add a special form `set`, similar to
+`define`, which gives a variable a new value, updating the variable in
+an outer scope if it doesn't already exist in the inner scope. If the
+variable is not defined at all, throw a `ReferenceError` (which is
+another standard error type).
 
-The technique of representing scopes as simple objects, which has made
-things very convenient so far, will get in your way a little at this
-point. You might want to use the `Object.getPrototypeOf` function,
-which allows you to get the prototype of an object. Also remember that
-scopes do not derive from `Object.prototype`, so if you want to call
-`hasOwnProperty` on them, you have to use the clumsy way:
-`Object.prototype.hasOwnProperty.call(scope, name)`.
+(((hasOwnProperty method)))(((prototype)))(((getPrototypeOf
+function)))The technique of representing scopes as simple objects,
+which has made things convenient so far, will get in your way a
+little at this point. You might want to use the
+`Object.getPrototypeOf` function, which returns the prototype of an
+object. Also remember that scopes do not derive from
+`Object.prototype`, so if you want to call `hasOwnProperty` on them,
+you have to use this clumsy expression:
 
-ifdef::html_target[]
+// test: no
+
+[source,javascript]
+----
+Object.prototype.hasOwnProperty.call(scope, name);
+----
+
+This fetches the `hasOwnProperty` method from the `Object` prototype
+and then calls it on a scope object.
+
+ifdef::interactive_target[]
 
 // test: no
 
@@ -798,19 +862,20 @@ run("do(define(x, 4),",
 run("set(quux, true)");
 // → Some kind of ReferenceError
 ----
-endif::html_target[]
+endif::interactive_target[]
 
-!!solution!!
+!!hint!!
 
-You will have to loop through one scope at a time, using
-`Object.getPrototypeOf` to go the next outer scope. For each scope,
-use `hasOwnProperty` to find out if the variable, indicated by the
-`name` property of the first argument to `set`, exists in that scope.
-If it does, set it to the result of evaluating the second argument to
-`set`, and return that value.
+(((variable,definition)))(((assignment)))(((getPrototypeOf
+function)))(((hasOwnProperty method)))You will have to loop through
+one ((scope)) at a time, using `Object.getPrototypeOf` to go the next
+outer scope. For each scope, use `hasOwnProperty` to find out whether the
+variable, indicated by the `name` property of the first argument to
+`set`, exists in that scope. If it does, set it to the result of
+evaluating the second argument to `set` and then return that value.
 
-When the outermost scope is reached (`Object.getPrototypeOf` returns
-null) and we haven't found the variable yet, it does not exist, and an
-error should be thrown.
+(((global scope)))(((run-time error)))If the outermost scope is
+reached (`Object.getPrototypeOf` returns null) and we haven't found
+the variable yet, it doesn't exist, and an error should be thrown.
 
-!!solution!!
+!!hint!!

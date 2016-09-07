@@ -9,95 +9,193 @@
       found.push({fn: m[1] || m[3] || null,
                   line: m[2] || m[4]});
     }
-    console.log(stack);
     return found;
   }
   function frameString(frame) {
     return "line " + frame.line + (frame.fn ? " in function " + frame.fn : "");
   }
 
-  var SandBox = window.SandBox = function(options) {
+  var SandBox = window.SandBox = function(options, callback) {
+    this.callbacks = {};
+
+    // Used to cancel existing events when new code is loaded
+    this.timeouts = []; this.intervals = []; this.frames = []; this.framePos = 0;
+
     var frame = this.frame = document.createElement("iframe");
-    frame.id = "sandbox";
-    frame.style.display = "none";
-    frame.src = "about:blank";
-    document.body.appendChild(frame);
+    frame.addEventListener("load", loaded);
+    frame.src = "empty.html";
+    if (options.place) {
+      options.place(frame);
+    } else {
+      frame.style.display = "none";
+      document.body.appendChild(frame);
+    }
 
-    var win = this.win = frame.contentWindow;
-    var self = win.__sandbox = this;
-
-    win.onerror = function(e, _file, line) {
-      if (!self.output) return;
-      self.output.out("error", [e + (line != null ? " (line " + line + ")" : "")]);
-      return true;
-    };
-    win.console = {
-      log: function() { self.out("log", arguments); },
-      error: function() { self.out("error", arguments); },
-      warn: function() { self.out("warn", arguments); },
-      info: function() { self.out("log", arguments); }
-    };
-    win.__setTimeout = win.setTimeout;
-    win.__setInterval = win.setInterval;
-    win.setTimeout = function(code, time) {
-      return win.__setTimeout(function() { self.run(code); }, time);
-    };
-    win.setInterval = function(code, time) {
-      return win.__setInterval(function() { self.run(code); }, time);
-    };
-
-    this.startedAt = 0;
-    this.extraSecs = 1;
+    this.startedAt = null;
+    this.extraSecs = 2;
     this.output = null;
 
-    if (options.loadFiles) setTimeout(function() {
-      var i = 0;
-      function loadNext() {
-        if (i == options.loadFiles.length) return;
-        var script = win.document.createElement("script");
-        script.src = options.loadFiles[i];
-        win.document.body.appendChild(script);
-        ++i;
-        script.addEventListener("load", loadNext);
+    var self = this;
+    function loaded() {
+      frame.removeEventListener("load", loaded);
+      self.win = frame.contentWindow;
+      self.setupEnv();
+
+      function resize() {
+        if (self.frame.style.display != "none") self.resizeFrame();
       }
-      loadNext();
-    }, 50);
+      self.frame.addEventListener("load", resize);
+      var resizeTimeout = null;
+      function scheduleResize() {
+        self.win.clearTimeout(resizeTimeout);
+        self.win.__setTimeout(resize, 200);
+      }
+      self.win.addEventListener("keydown", scheduleResize);
+      self.win.addEventListener("mousedown", scheduleResize);
+
+      if (options.loadFiles) {
+        var i = 0;
+        var loadNext = function() {
+          if (i == options.loadFiles.length) return callback(self);
+          var script = self.win.document.createElement("script");
+          script.src = options.loadFiles[i];
+          self.win.document.body.appendChild(script);
+          ++i;
+          script.addEventListener("load", loadNext);
+        };
+        loadNext();
+      } else {
+        callback(self);
+      }
+    }
   };
 
   SandBox.prototype = {
     run: function(code, output) {
-      if (output) this.output = output;
+      if (output)
+        this.output = output;
       this.startedAt = Date.now();
-      this.extraSecs = 1;
+      this.extraSecs = 2;
       this.win.__c = 0;
       timeout(this.win, preprocess(code, this), 0);
     },
-    show: function(html, output) {
+    setHTML: function(code, output, callback) {
+      this.clearEvents();
+      var loc = String(this.win.document.location), self = this;
+      if (loc != String(document.location) && !/\/empty\.html$/.test(loc)) {
+        this.frame.src = "empty.html";
+        var loaded = function() {
+          self.frame.removeEventListener("load", loaded);
+          self.setupEnv();
+          self.setHTML(code, output, callback);
+        };
+        this.frame.addEventListener("load", loaded);
+        return;
+      }
+
       var scriptTags = [], sandbox = this, doc = this.win.document;
       this.frame.style.display = "block";
-      doc.documentElement.innerHTML = html.replace(/<script\b[^>]*?(?:\bsrc\s*=\s*('[^']+'|"[^"]+"|[^\s>]+)[^>]*)?>([\s\S]*?)<\/script>/, function(m, src, content) {
+      doc.documentElement.innerHTML = code.replace(/<script\b[^>]*?(?:\bsrc\s*=\s*('[^']+'|"[^"]+"|[^\s>]+)[^>]*)?>([\s\S]*?)<\/script>/g, function(m, src, content) {
         var tag = doc.createElement("script");
         if (src) {
           if (/["']/.test(src.charAt(0))) src = src.slice(1, src.length - 1);
           tag.src = src;
         } else {
-          tag.innerHTML = preprocess(content, sandbox);
+          tag.text = preprocess(content, sandbox);
         }
         scriptTags.push(tag);
         return "";
       });
 
-      if (output) {
-        this.output = output;
-        output.addFrame(this.frame);
+      this.frame.style.height = "80px";
+      this.resizeFrame();
+      if (output) this.output = output;
+      var sandbox = this;
+
+      function loadScript(i) {
+        if (i == scriptTags.length) {
+          if (i) setTimeout(function() {sandbox.resizeFrame();}, 50);
+          callback && callback();
+          return;
+        }
+
+        sandbox.startedAt = Date.now();
+        sandbox.extraSecs = 2;
+        sandbox.win.__c = 0;
+        var tag = scriptTags[i];
+        if (tag.src) {
+          tag.addEventListener("load", function() { loadScript(i + 1); });
+        } else {
+          var id = Math.floor(Math.random() * 0xffffff);
+          sandbox.callbacks[id] = function() { delete sandbox.callbacks[id]; loadScript(i + 1); };
+          tag.text += ";__sandbox.callbacks[" + id + "]();";
+        }
+        doc.body.appendChild(tag);
       }
-      this.startedAt = Date.now();
-      this.extraSecs = 1;
-      this.win.__c = 0;
-      scriptTags.forEach(function(tag) { doc.body.appendChild(tag); });
+      loadScript(0);
+    },
+    setupEnv: function() {
+      var win = this.win, self = this;
+      win.__sandbox = this;
+
+      win.onerror = function(e, _file, line) {
+        if (!self.output) return;
+        self.output.out("error", [e + (line != null ? " (line " + line + ")" : "")]);
+        return true;
+      };
+      win.console = {
+        log: function() { self.out("log", arguments); },
+        error: function() { self.out("error", arguments); },
+        warn: function() { self.out("warn", arguments); },
+        info: function() { self.out("log", arguments); }
+      };
+      win.setInterval(function() {
+        self.startedAt = null;
+      }, 1000);
+
+      win.__setTimeout = win.setTimeout;
+      win.__setInterval = win.setInterval;
+      win.setTimeout = function(code, time) {
+        var val = win.__setTimeout(function() { self.run(code); }, time);
+        self.timeouts.push(val);
+        return val;
+      };
+      win.setInterval = function(code, time) {
+        var val = win.__setInterval(function() { self.run(code); }, time);
+        self.intervals.push(val);
+        return val;
+      };
+      var prefixes = ["webkit", "moz", "ms", "o"];
+      var reqAnimFrame = win.requestAnimationFrame;
+      if (!reqAnimFrame) ["webkit", "moz", "ms", "o"].forEach(function(prefix) {
+        var val = win[prefix + "RequestAnimationFrame"];
+        if (val) {
+          reqAnimFrame = val;
+          win.cancelAnimationFrame = prefix + "CancelAnimationFrame";
+        }
+      });
+      if (!reqAnimFrame) {
+        reqAnimFrame = function(f) { return self.__setTimeout(f, 50); };
+        win.cancelAnimationFrame = win.clearTimeout;
+      }
+      win.requestAnimationFrame = function(f) {
+        var val = reqAnimFrame.call(win, f);
+        if (self.frames.length > 50)
+          self.frames[self.framePos++ % 50] = val;
+        else
+          self.frames.push(val);
+        return val;
+      };
+    },
+    resizeFrame: function() {
+      this.frame.style.height = Math.max(80, Math.min(this.win.document.documentElement.offsetHeight + 10, 500)) + "px";
+      var box = this.frame.getBoundingClientRect();
+      if (box.bottom > box.top && box.top >= 0 && box.top < window.innerHeight && box.bottom > window.innerHeight)
+        window.scrollBy(0, Math.min(box.top, box.bottom - window.innerHeight));
     },
     tick: function() {
       var now = Date.now();
+      if (this.startedAt == null) this.startedAt = now;
       if (now < this.startedAt + this.extraSecs * 1000) return;
       var bail = confirm("This code has been running for " + this.extraSecs +
                          " seconds. Abort it?");
@@ -123,6 +221,12 @@
           mark.innerHTML = "\n called from " + stack.slice(1).map(frameString).join("\n called from ");
         });
       }
+    },
+    clearEvents: function() {
+      while (this.timeouts.length) this.win.clearTimeout(this.timeouts.pop());
+      while (this.intervals.length) this.win.clearInterval(this.intervals.pop());
+      while (this.frames.length) this.win.cancelAnimationFrame(this.frames.pop());
+      this.timeouts.length = this.intervals.length = this.frames.length = this.framePos = 0;
     }
   };
 
@@ -136,6 +240,7 @@
       return code;
     }
 
+    var strict = /^(\s|\/\/.*)*["']use strict['"]/.test(code);
     try { var ast = acorn.parse(code); }
     catch(e) { return code; }
     var patches = [];
@@ -154,6 +259,22 @@
       WhileStatement: loop,
       DoWhileStatement: loop
     });
+    for (var i = strict ? 1 : 0, tryPos = 0; i < ast.body.length; i++) {
+      var stat = ast.body[i];
+      if (stat.type != "FunctionDeclaration") {
+        tryPos = stat.start;
+        break;
+      }
+    }
+    patches.push({from: tryPos, text: "try{"});
+    for (var i = ast.body.length - 1, catchPos = ast.end; i >= 0; i--) {
+      var stat = ast.body[i];
+      if (stat.type != "FunctionDeclaration") {
+        catchPos = stat.end;
+        break;
+      }
+    }
+    patches.push({from: catchPos, text: "}catch(e){__sandbox.error(e);}"});
     patches.sort(function(a, b) { return a.from - b.from; });
     var out = "";
     for (var i = 0, pos = 0; i < patches.length; ++i) {
@@ -162,35 +283,14 @@
       pos = patch.to || patch.from;
     }
     out += code.slice(pos, code.length);
-    return "try{" + out + "\n}catch(e){__sandbox.error(e);}";
+    return (strict ? '"use strict";' : "") + out;
   }
-
-  function pageScrollX() { return window.pageXOffset || (document.documentElement || document.body).scrollLeft; }
-  function pageScrollY() { return window.pageYOffset || (document.documentElement || document.body).scrollTop; }
 
   var Output = SandBox.Output = function(div) {
     this.div = div;
   };
 
-  var currentPlaceHolder = null;
-  function positionFrame(node) {
-    node.style.width = currentPlaceHolder.offsetWidth + "px";
-    node.style.height = currentPlaceHolder.offsetHeight + "px";
-    var box = currentPlaceHolder.getBoundingClientRect();
-    node.style.left = (box.left + pageScrollX()) + "px";
-    node.style.top = (box.top + pageScrollY()) + "px";
-  }
-
-  window.addEventListener("resize", Output.repositionFrame = function() {
-    if (currentPlaceHolder) {
-      if (currentPlaceHolder.parentNode) {
-        positionFrame(currentPlaceHolder.frame);
-      } else {
-        currentPlaceHolder.frame.style.display = "none";
-        currentPlaceHolder = false;
-      }
-    }
-  });
+  var safari = /Safari\//.test(navigator.userAgent);
 
   Output.prototype = {
     clear: function() { this.div.innerHTML = ""; },
@@ -206,16 +306,8 @@
           wrap.appendChild(represent(arg, 58));
       }
       this.div.appendChild(wrap);
-    },
-    addFrame: function(node) {
-      if (currentPlaceHolder && currentPlaceHolder.parentNode)
-        currentPlaceHolder.parentNode.removeChild(currentPlaceHolder);
-      currentPlaceHolder = this.div.parentNode.insertBefore(document.createElement("div"), this.div);
-      currentPlaceHolder.innerHTML = "&nbsp;";
-      currentPlaceHolder.style.height = Math.max(100, Math.min(node.contentWindow.document.body.clientHeight, 600)) + "px";
-      currentPlaceHolder.frame = node;
-      node.style.position = "absolute";
-      positionFrame(node);
+      if (safari)
+        setTimeout(function() { this.div.style.minHeight = ".1em"; }.bind(this), 50);
     }
   };
 
@@ -325,7 +417,9 @@
 
   function expandObj(node, type, val) {
     var wrap = document.createElement("span");
-    wrap.appendChild(document.createTextNode(type == "array" ? "[" : "{"));
+    var opening = type == "array" ? "[" : "{", cname;
+    if (opening == "{" && (cname = constructorName(val))) opening = cname + " {";
+    wrap.appendChild(document.createTextNode(opening));
     var block = wrap.appendChild(document.createElement("div"));
     block.className = "sandbox-output-etc-block";
     var table = block.appendChild(document.createElement("table"));
